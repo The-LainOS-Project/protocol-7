@@ -1,0 +1,20 @@
+#!/sbin/openrc-run
+
+description="Protocol 7 D-Bus logind Bridge"
+
+command="/usr/lib/lainos/lainos-dbus-bridge"
+command_background="yes"
+pidfile="/run/lainos-dbus-bridge.pid"
+
+start_stop_daemon_args="--wait 500"
+
+depend() {
+    need dbus
+    after seatd
+    before display-manager
+}
+
+start_pre() {
+    checkpath -d -m 0755 /run/systemd
+    checkpath -d -m 0755 /run/user
+}

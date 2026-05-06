@@ -1,0 +1,19 @@
+#!/sbin/openrc-run
+
+description="Protocol 7 sd_notify Socket Sink"
+
+command="/usr/libexec/lainos/lainos-notifyd"
+command_background="yes"
+pidfile="/run/lainos-notifyd.pid"
+
+start_stop_daemon_args="--wait 500"
+
+depend() {
+    need localmount
+    after dbus
+    before seatd
+}
+
+start_pre() {
+    checkpath -d -m 0755 /run/systemd
+}

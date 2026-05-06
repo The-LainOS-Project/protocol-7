@@ -1,0 +1,54 @@
+#!/sbin/openrc-run
+
+description="Protocol 7 cgroup v2 Controller Delegation"
+
+start() {
+    ebegin "Delegating cgroup v2 controllers"
+
+    local cgroup_base="/sys/fs/cgroup"
+    local user_slice="${cgroup_base}/user.slice"
+
+    if [ ! -d "${cgroup_base}" ]; then
+        eerror "cgroup2 not mounted at ${cgroup_base}"
+        return 1
+    fi
+
+    local controllers="cpu memory io pids"
+    for ctrl in ${controllers}; do
+        if [ -f "${cgroup_base}/cgroup.subtree_control" ]; then
+            echo "+${ctrl}" > "${cgroup_base}/cgroup.subtree_control" 2>/dev/null || \
+                ewarn "Failed to enable ${ctrl} controller"
+        fi
+    done
+
+    if [ ! -d "${user_slice}" ]; then
+        mkdir -p "${user_slice}"
+        chown root:root "${user_slice}"
+        chmod 755 "${user_slice}"
+    fi
+
+    for ctrl in ${controllers}; do
+        if [ -f "${user_slice}/cgroup.subtree_control" ]; then
+            echo "+${ctrl}" > "${user_slice}/cgroup.subtree_control" 2>/dev/null || true
+        fi
+    done
+
+    if [ -f "${user_slice}/memory.max" ]; then
+        echo "max" > "${user_slice}/memory.max" 2>/dev/null || true
+    fi
+    if [ -f "${user_slice}/memory.swap.max" ]; then
+        echo "max" > "${user_slice}/memory.swap.max" 2>/dev/null || true
+    fi
+
+    eend 0
+}
+
+stop() {
+    ebegin "Releasing cgroup delegation"
+    eend 0
+}
+
+depend() {
+    need localmount
+    after root
+}

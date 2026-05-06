@@ -1,0 +1,14 @@
+sha256sums=(
+    '6b5e5674efa83327df951ef31ce3fd8a0ea56ea238cbe2cc13d7f3c1847a3cc7'  # libsystemd-mock.c
+    '6742b32b20adc1dbc1a74ab9366270d0a778fcd73735aed2e89b08f38ac64141'  # libdbus-mock.c
+    '904076b9f80a027d5844b5d012fe17f7e9d0e23a4bbc93aaf770f2b28a488f1e'  # lainos-dbus-bridge.c
+    'c58088221de1eda4f4f4c6048d986d0e03e32594bdfcc90fd7b895371a5c74a1'  # lainos-ghost-units.c
+    '7eff44b16577218a9d1e2671dbd71dab4deed8d5622a2b1f03b8a6cb2be6a626'  # lainos-init.c
+    '42126fa9afa814d769b83e922c0471cd2b4c89d32fb611eaca3713f91012699a'  # lainos-audio-init.c
+    '817d7caf0301ac582a689b0219e960c3c1541080706836ebd772804da5fdd816'  # lainos-net-init.c
+    '1e81d0e1e5bfe8b14cabf6c066dc6dbaf6d78a4e64214c325a70223b92fa0917'  # lainos-notifyd.c
+    'dbe04aea04993ec87d767db20a23455a857375e54b6ae0f1a835e136a50b6d2f'  # lainos-dbus-bridge.initd
+    'b64251e6f6b8090ff9f4123daccf8c72ec9a47cf9a7713763e7ddd8c13100bcb'  # lainos-notifyd.initd
+    'dad68eeae551a9648188e55751abaf519425065ec3f7a3747f003e1a5e6c50ea'  # cgroup-delegate.initd
+    '5c6529793da1d8e9c5ca6cf7289b8b8c917301f433997997cd593d974922fe43'  # protocol7-core.install
+)

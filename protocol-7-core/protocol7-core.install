@@ -1,0 +1,59 @@
+# protocol7-core.install
+# arg 1: new version
+# arg 2: old version (blank on install)
+
+post_install() {
+    if ! getent group notify >/dev/null 2>&1; then
+        groupadd -r notify
+    fi
+
+    mkdir -p /run/systemd/{system,notify,private,users,sessions,machines,shutdown,inhibit}
+    chmod 755 /run/systemd
+    chown root:notify /run/systemd/notify 2>/dev/null || true
+
+    for svc in cgroup-delegate lainos-ghost-units lainos-dbus-bridge lainos-notifyd; do
+        if [ -f "/etc/init.d/$svc" ]; then
+            case "$svc" in
+                cgroup-delegate|lainos-ghost-units)
+                    rc-update add "$svc" boot 2>/dev/null || true
+                    ;;
+                *)
+                    rc-update add "$svc" default 2>/dev/null || true
+                    ;;
+            esac
+        fi
+    done
+
+    ldconfig 2>/dev/null || true
+
+    if find /usr/lib -name "libsystemd*.so*" -not -path "*/lainos/*" 2>/dev/null | grep -q .; then
+        echo " WARNING: Stray libsystemd detected outside protocol7-core"
+    fi
+
+    if ! grep -q "NoExtract.*usr/lib/systemd" /etc/pacman.conf 2>/dev/null; then
+        echo " WARNING: pacman.conf may not be hardened against systemd unit files."
+        echo " Ensure NoExtract rules for /usr/lib/systemd are present."
+    fi
+
+    echo "==> Protocol 7 Core $1 installed"
+    echo "    -> Reboot recommended to apply all changes"
+}
+
+post_upgrade() {
+    post_install "$1"
+}
+
+pre_remove() {
+    for svc in lainos-notifyd lainos-dbus-bridge lainos-ghost-units cgroup-delegate; do
+        if rc-service "$svc" status >/dev/null 2>&1; then
+            rc-service "$svc" stop
+        fi
+    done
+}
+
+post_remove() {
+    echo "Protocol 7 Core removed"
+    echo " notify group preserved for other components"
+    echo " /run/systemd not removed automatically"
+    echo " Manual cleanup: groupdel notify, rm -rf /run/systemd"
+}
