@@ -1,54 +1,56 @@
 #!/sbin/openrc-run
+# cgroup-delegate.initd — Protocol 7 cgroup v2 delegation
+# v4.3.1: Added cgroup2fs mount type verification
 
-description="Protocol 7 cgroup v2 Controller Delegation"
+depend() {
+    need localmount
+    after root
+}
 
 start() {
-    ebegin "Delegating cgroup v2 controllers"
+    ebegin "Delegating cgroup2 controllers"
 
-    local cgroup_base="/sys/fs/cgroup"
-    local user_slice="${cgroup_base}/user.slice"
-
-    if [ ! -d "${cgroup_base}" ]; then
-        eerror "cgroup2 not mounted at ${cgroup_base}"
+    # Verify /sys/fs/cgroup is actually cgroup2fs
+    local fstype
+    fstype=$(stat -f -c %T /sys/fs/cgroup 2>/dev/null)
+    if [ "$fstype" != "cgroup2fs" ]; then
+        eerror "/sys/fs/cgroup is not cgroup2fs (found: ${fstype:-unknown})"
+        eerror "Protocol 7 requires pure cgroup v2. Hybrid or v1 mounts are not supported."
         return 1
     fi
 
-    local controllers="cpu memory io pids"
-    for ctrl in ${controllers}; do
-        if [ -f "${cgroup_base}/cgroup.subtree_control" ]; then
-            echo "+${ctrl}" > "${cgroup_base}/cgroup.subtree_control" 2>/dev/null || \
-                ewarn "Failed to enable ${ctrl} controller"
+    # Enable controllers at root
+    for ctrl in cpu memory io pids; do
+        if [ -f "/sys/fs/cgroup/cgroup.subtree_control" ]; then
+            echo "+${ctrl}" > /sys/fs/cgroup/cgroup.subtree_control 2>/dev/null || ewarn "Failed to enable ${ctrl} controller"
         fi
     done
 
-    if [ ! -d "${user_slice}" ]; then
-        mkdir -p "${user_slice}"
-        chown root:root "${user_slice}"
-        chmod 755 "${user_slice}"
-    fi
+    # Create user.slice
+    mkdir -p /sys/fs/cgroup/user.slice
+    chown root:root /sys/fs/cgroup/user.slice
+    chmod 755 /sys/fs/cgroup/user.slice
 
-    for ctrl in ${controllers}; do
-        if [ -f "${user_slice}/cgroup.subtree_control" ]; then
-            echo "+${ctrl}" > "${user_slice}/cgroup.subtree_control" 2>/dev/null || true
+    # Enable controllers in user.slice
+    for ctrl in cpu memory io pids; do
+        if [ -f "/sys/fs/cgroup/user.slice/cgroup.subtree_control" ]; then
+            echo "+${ctrl}" > /sys/fs/cgroup/user.slice/cgroup.subtree_control 2>/dev/null || ewarn "Failed to enable ${ctrl} in user.slice"
         fi
     done
 
-    if [ -f "${user_slice}/memory.max" ]; then
-        echo "max" > "${user_slice}/memory.max" 2>/dev/null || true
+    # Set memory limits (unlimited)
+    if [ -f "/sys/fs/cgroup/user.slice/memory.max" ]; then
+        echo "max" > /sys/fs/cgroup/user.slice/memory.max 2>/dev/null || ewarn "Failed to set memory.max"
     fi
-    if [ -f "${user_slice}/memory.swap.max" ]; then
-        echo "max" > "${user_slice}/memory.swap.max" 2>/dev/null || true
+    if [ -f "/sys/fs/cgroup/user.slice/memory.swap.max" ]; then
+        echo "max" > /sys/fs/cgroup/user.slice/memory.swap.max 2>/dev/null || ewarn "Failed to set memory.swap.max"
     fi
 
     eend 0
 }
 
 stop() {
-    ebegin "Releasing cgroup delegation"
+    ebegin "Cleaning up cgroup delegation"
+    # No-op: we don't tear down cgroups on stop to avoid killing running processes
     eend 0
-}
-
-depend() {
-    need localmount
-    after root
 }

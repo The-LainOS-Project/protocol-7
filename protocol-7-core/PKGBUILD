@@ -1,7 +1,7 @@
 # Maintainer: Grayson Giles <amnesia at lainos dot net>
 pkgname=protocol7-core
-pkgver=3.9.2
-pkgrel=1
+pkgver=4.3.0
+pkgrel=2
 pkgdesc="Protocol 7 Sovereign Core - ABI Subversion & Session Infrastructure"
 arch=('x86_64')
 url="https://forgejo.lain.rocks/lainOS/Protocol-7"
@@ -17,82 +17,87 @@ replaces=('systemd' 'systemd-libs' 'systemd-sysvcompat' 'systemd-resolvconf')
 install=protocol7-core.install
 
 source=(
-    "libsystemd-mock.c"
-    "libdbus-mock.c"
-    "lainos-dbus-bridge.c"
-    "lainos-ghost-units.c"
-    "lainos-init.c"
-    "lainos-audio-init.c"
-    "lainos-net-init.c"
-    "lainos-notifyd.c"
-    "lainos-dbus-bridge.initd"
-    "lainos-notifyd.initd"
-    "cgroup-delegate.initd"
-    "protocol7-core.install"
+  "libsystemd-mock.c"
+  "libdbus-mock.c"
+  "lainos-dbus-bridge.c"
+  "lainos-ghost-units.c"
+  "lainos-init.c"
+  "lainos-audio-init.c"
+  "lainos-net-init.c"
+  "lainos-notifyd.c"
+  "lainos-dbus-bridge.initd"
+  "lainos-notifyd.initd"
+  "cgroup-delegate.initd"
+  "protocol7-core.install"
 )
 
-sha256sums=(
-    '6b5e5674efa83327df951ef31ce3fd8a0ea56ea238cbe2cc13d7f3c1847a3cc7'  # libsystemd-mock.c
-    '6742b32b20adc1dbc1a74ab9366270d0a778fcd73735aed2e89b08f38ac64141'  # libdbus-mock.c
-    '904076b9f80a027d5844b5d012fe17f7e9d0e23a4bbc93aaf770f2b28a488f1e'  # lainos-dbus-bridge.c
-    'c58088221de1eda4f4f4c6048d986d0e03e32594bdfcc90fd7b895371a5c74a1'  # lainos-ghost-units.c
-    '7eff44b16577218a9d1e2671dbd71dab4deed8d5622a2b1f03b8a6cb2be6a626'  # lainos-init.c
-    '42126fa9afa814d769b83e922c0471cd2b4c89d32fb611eaca3713f91012699a'  # lainos-audio-init.c
-    '817d7caf0301ac582a689b0219e960c3c1541080706836ebd772804da5fdd816'  # lainos-net-init.c
-    '1e81d0e1e5bfe8b14cabf6c066dc6dbaf6d78a4e64214c325a70223b92fa0917'  # lainos-notifyd.c
-    'dbe04aea04993ec87d767db20a23455a857375e54b6ae0f1a835e136a50b6d2f'  # lainos-dbus-bridge.initd
-    'b64251e6f6b8090ff9f4123daccf8c72ec9a47cf9a7713763e7ddd8c13100bcb'  # lainos-notifyd.initd
-    'dad68eeae551a9648188e55751abaf519425065ec3f7a3747f003e1a5e6c50ea'  # cgroup-delegate.initd
-    '5c6529793da1d8e9c5ca6cf7289b8b8c917301f433997997cd593d974922fe43'  # protocol7-core.install
-)
+sha256sums=('5a3576242bedd21bf7f95900ba49b4dfd8b8bdf0ab80cd78252d1f6e7301f676'
+  'd572b088f7cb9f4b330996c1e57f959a31be51a052388efccd1fcd5fca218e5b'
+  '6db4dca592eb504a5022c7b289066efb83f624ec13e378d398f3cc0e8e7a9488'
+  'c58088221de1eda4f4f4c6048d986d0e03e32594bdfcc90fd7b895371a5c74a1'
+  '4f1f0418cc6009b4108091b103cc0ca8c3b2cb872b91840877f6cbd1c12b9363'
+  '42737eb3c33fb8d47843c1ae7d0d88721da385a3a0c0b9927e8725950e6d2574'
+  '0b5a50d179c8bf353fa329b1f2ce397f74987eb05c32483bf981189d6c1578ae'
+  '0bc15ec495af35e6c2f1e2690e2d25fb78d0f4483f25ce1ea74c15fc2671e246'
+  'dbe04aea04993ec87d767db20a23455a857375e54b6ae0f1a835e136a50b6d2f'
+  'b64251e6f6b8090ff9f4123daccf8c72ec9a47cf9a7713763e7ddd8c13100bcb'
+  'dad68eeae551a9648188e55751abaf519425065ec3f7a3747f003e1a5e6c50ea'
+  '5c6529793da1d8e9c5ca6cf7289b8b8c917301f433997997cd593d974922fe43')
 
 build() {
-    cd "$srcdir"
+  cd "$srcdir"
 
-    gcc -fPIC -shared -O2 -flto -s \
-        -Wl,-soname,libsystemd.so.0 \
-        -o libsystemd.so.0 libsystemd-mock.c
+  gcc -fPIC -shared -O2 -flto -s \
+    -Wl,-soname,libsystemd.so.0 \
+    -o libsystemd.so.0 libsystemd-mock.c
 
-    gcc -fPIC -shared -O2 -flto -s \
-        -Wl,-soname,libdbus-1.so.3 \
-        -o libdbus-1.so.3 libdbus-mock.c
+  gcc -fPIC -shared -O2 -flto -s \
+    -Wl,-soname,libdbus-1.so.3 \
+    -o libdbus-1.so.3 libdbus-mock.c
 
-    gcc -O2 -flto -s -Wall -pie ${CFLAGS} ${LDFLAGS} \
-        -o lainos-dbus-bridge lainos-dbus-bridge.c -ldbus-1 -lseccomp
+  gcc -O2 -flto -s -Wall -pie ${CFLAGS} ${LDFLAGS} \
+    -o lainos-dbus-bridge lainos-dbus-bridge.c -ldbus-1 -lseccomp
 
-    gcc -O2 -flto -s -Wall -pie ${CFLAGS} ${LDFLAGS} \
-        -o lainos-ghost-units lainos-ghost-units.c
+  gcc -O2 -flto -s -Wall -pie ${CFLAGS} ${LDFLAGS} \
+    -o lainos-ghost-units lainos-ghost-units.c
 
-    gcc -O2 -flto -s -Wall -pie ${CFLAGS} ${LDFLAGS} \
-        -o lainos-init lainos-init.c
+  gcc -O2 -flto -s -Wall -pie ${CFLAGS} ${LDFLAGS} \
+    -o lainos-init lainos-init.c
 
-    gcc -O2 -flto -s -Wall -pie ${CFLAGS} ${LDFLAGS} \
-        -o lainos-audio-init lainos-audio-init.c
+  gcc -O2 -flto -s -Wall -pie ${CFLAGS} ${LDFLAGS} \
+    -o lainos-audio-init lainos-audio-init.c
 
-    gcc -O2 -flto -s -Wall -pie ${CFLAGS} ${LDFLAGS} \
-        -o lainos-net-init lainos-net-init.c
+  gcc -O2 -flto -s -Wall -pie ${CFLAGS} ${LDFLAGS} \
+    -o lainos-net-init lainos-net-init.c
 
-    gcc -O2 -flto -s -Wall -pie ${CFLAGS} ${LDFLAGS} \
-        -o lainos-notifyd lainos-notifyd.c -lseccomp
+  gcc -O2 -flto -s -Wall -pie ${CFLAGS} ${LDFLAGS} \
+    -o lainos-notifyd lainos-notifyd.c -lseccomp
 }
 
 package() {
-    cd "$srcdir"
+  cd "$srcdir"
 
-    install -Dm755 libsystemd.so.0          "${pkgdir}/usr/lib/libsystemd.so.0"
-    install -Dm755 libdbus-1.so.3           "${pkgdir}/usr/lib/libdbus-1.so.3"
+  install -Dm755 libsystemd.so.0 "${pkgdir}/usr/lib/libsystemd.so.0"
+  install -Dm755 libdbus-1.so.3 "${pkgdir}/usr/lib/libdbus-1.so.3"
 
-    install -Dm755 lainos-dbus-bridge       "${pkgdir}/usr/lib/lainos/lainos-dbus-bridge"
-    install -Dm755 lainos-ghost-units       "${pkgdir}/usr/libexec/lainos/lainos-ghost-units"
-    install -Dm755 lainos-init              "${pkgdir}/usr/libexec/lainos/lainos-init"
-    install -Dm755 lainos-audio-init        "${pkgdir}/usr/libexec/lainos/lainos-audio-init"
-    install -Dm755 lainos-net-init          "${pkgdir}/usr/libexec/lainos/lainos-net-init"
-    install -Dm755 lainos-notifyd           "${pkgdir}/usr/libexec/lainos/lainos-notifyd"
+  # Install linker names (required for -lsystemd / -ldbus-1 at build time)
+  # These symlinks satisfy pkg-config --libs and raw -l flags used by AUR builds.
+  # Without these, any package compiling with -lsystemd will fail at link time.
+  ln -s libsystemd.so.0 "${pkgdir}/usr/lib/libsystemd.so"
+  ln -s libsystemd.so.0 "${pkgdir}/usr/lib/libsystemd.so.0.0.0"
+  ln -s libdbus-1.so.3 "${pkgdir}/usr/lib/libdbus-1.so"
 
-    install -Dm755 lainos-dbus-bridge.initd "${pkgdir}/etc/init.d/lainos-dbus-bridge"
-    install -Dm755 lainos-notifyd.initd     "${pkgdir}/etc/init.d/lainos-notifyd"
-    install -Dm755 cgroup-delegate.initd    "${pkgdir}/etc/init.d/cgroup-delegate"
+  install -Dm755 lainos-dbus-bridge "${pkgdir}/usr/lib/lainos/lainos-dbus-bridge"
+  install -Dm755 lainos-ghost-units "${pkgdir}/usr/libexec/lainos/lainos-ghost-units"
+  install -Dm755 lainos-init "${pkgdir}/usr/libexec/lainos/lainos-init"
+  install -Dm755 lainos-audio-init "${pkgdir}/usr/libexec/lainos/lainos-audio-init"
+  install -Dm755 lainos-net-init "${pkgdir}/usr/libexec/lainos/lainos-net-init"
+  install -Dm755 lainos-notifyd "${pkgdir}/usr/libexec/lainos/lainos-notifyd"
 
-    install -Dm644 /dev/null "${pkgdir}/usr/lib/tmpfiles.d/lainos-notifyd.conf"
-    echo "d /run/systemd 0755 root root -" > "${pkgdir}/usr/lib/tmpfiles.d/lainos-notifyd.conf"
+  install -Dm755 lainos-dbus-bridge.initd "${pkgdir}/etc/init.d/lainos-dbus-bridge"
+  install -Dm755 lainos-notifyd.initd "${pkgdir}/etc/init.d/lainos-notifyd"
+  install -Dm755 cgroup-delegate.initd "${pkgdir}/etc/init.d/cgroup-delegate"
+
+  install -Dm644 /dev/null "${pkgdir}/usr/lib/tmpfiles.d/lainos-notifyd.conf"
+  echo "d /run/systemd 0755 root root -" >"${pkgdir}/usr/lib/tmpfiles.d/lainos-notifyd.conf"
 }

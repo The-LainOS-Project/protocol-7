@@ -417,6 +417,8 @@ The complete component map is documented in the repository. Core components incl
 
 
 
-Protocol 7: ≈ around 2,500 lines of actual working code 
+Protocol 7: ≈ 2,935 LOC
 
-systemd: ≈ 1.2 – 1.7 million lines of code 
+OpenRC: ≈ 14,000 LOC
+
+systemd: ≈ 1.2 – 1.7 million LOC 

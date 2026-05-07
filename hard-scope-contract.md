@@ -1,307 +1,277 @@
-# Protocol 7 — Hard Scope Contract (Layer 02 System)
+# Protocol 7 — Hard Scope Contract (Compatibility-First Edition)
 
-This document defines the **non-negotiable architectural boundaries** of Protocol 7.
+## 1. Purpose
 
-It is not guidance.
-It is a constraint system.
+This document defines the architectural and behavioral boundaries of Protocol 7.
 
-Any deviation from this contract means the system is no longer Protocol 7.
+Protocol 7 is a **compatibility surface for systemd-linked software running on a non-systemd system (OpenRC-based Arch Linux)**.
 
----
+It provides:
 
-# 1. Core Principle
+* ABI compatibility
+* expected D-Bus interfaces
+* minimal system identity semantics
+* controlled compatibility responses
 
-> **OpenRC is the only system authority. Everything else is translation, compatibility, or surface emulation.**
-
-No other component may:
-
-* schedule services
-* resolve dependencies
-* define system state
-* enforce policy
-* manage sessions globally
+It does **not implement systemd**, and it does **not attempt to replicate systemd as a system manager**.
 
 ---
 
-# 2. Authority Hierarchy (Strict)
+## 2. Core Principles
 
-## Level 0 — Kernel (Immutable)
+### 2.1 OpenRC is the System Authority
 
-* Linux kernel
-* cgroups v2
-* device drivers
-
-**Role:** hardware execution only
-**Cannot be influenced by Protocol 7**
+* OpenRC is the only service manager and boot authority.
+* Protocol 7 does not replace, extend, or reimplement OpenRC behavior.
 
 ---
 
-## Level 1 — System Authority (Single Source of Truth)
+### 2.2 Interface Compatibility, Not System Emulation
 
-### OpenRC
-
-**This is the ONLY authority in the system**
-
-Allowed responsibilities:
-
-* start/stop services
-* define boot order (static)
-* manage system daemons
-* maintain system runtime state
-
-Disallowed:
-
-* systemd-style dependency graph solving
-* session management logic
-* IPC orchestration beyond service control
+* systemd interfaces may be exposed (ABI, D-Bus, paths)
+* internal systemd behavior is not implemented
+* only the *minimum behavior required for application compatibility* is provided
 
 ---
 
-## Level 2 — Real Runtime Services
+### 2.3 Minimal Deterministic System State
 
-These are **actual system components**, not emulation:
+Protocol 7 may maintain **minimal, fixed system identity state** for compatibility purposes:
 
-* dbus-openrc
-* seatd
-* PipeWire / WirePlumber
-* iwd
-* openresolv
+* single user
+* single session
+* single seat (`seat0`)
+* stable machine identity representation
 
-Allowed:
+This state is:
 
-* real IPC
-* real device/session control
-* real networking/audio stack behavior
+* deterministic
+* non-evolving
+* not a lifecycle system
 
-Disallowed:
-
-* interpreting systemd semantics
-* managing services outside their domain
+It does not represent a session manager or orchestration engine.
 
 ---
 
-## Level 3 — Session Bootstrap
+### 2.4 Compatibility-First Return Policy
 
-* `lainos-init`
-* `lainos-audio-init`
-* `lainos-net-init`
+When handling systemd-related calls:
 
-Allowed:
+* Return success when:
 
-* set environment
-* launch session compositor (e.g. Sway)
-* initialize user runtime directories
+  * no real system side-effect exists
+  * behavior is informational or cosmetic
+  * a harmless no-op satisfies caller expectations
 
-Disallowed:
+* Return errors when:
 
-* service lifecycle management
-* cross-service coordination logic
-* persistent system state tracking
+  * the operation requires real systemd subsystem behavior
+  * it implies unsupported orchestration or multi-user logic
+  * it depends on missing kernel/system features
 
----
-
-## Level 4 — Compatibility Layer (STRICT LIMIT)
-
-### Includes:
-
-* `libsystemd-mock`
-* `libdbus-mock`
-
-### Allowed Behavior:
-
-* satisfy linker symbols
-* return safe static values
-* provide ABI compatibility
-* avoid crashes
-* provide deterministic fake responses
-
-### STRICTLY FORBIDDEN:
-
-* maintaining internal system state
-* simulating systemd lifecycle behavior
-* tracking units, services, or dependencies
-* making scheduling decisions
-* adapting behavior based on runtime history
-
-> This layer must behave like a **dictionary of answers**, not a system.
+Errors must be accurate, not defensive.
 
 ---
 
-## Level 5 — D-Bus Translation Layer
+### 2.5 No Systemd Reimplementation
 
-* `lainos-dbus-bridge`
+Protocol 7 must not implement:
 
-Allowed:
+* unit lifecycle management
+* dependency graphs
+* service orchestration engines
+* transaction systems
+* multi-seat/session management systems
 
-* translate known systemd D-Bus interfaces → OpenRC equivalents
-* provide static or computed responses based on real system state
-* act as compatibility facade for login1-style queries
-
-Forbidden:
-
-* implementing a service manager
-* enforcing policy decisions
-* inventing lifecycle states beyond OpenRC reality
-* becoming a second init system
+It may respond to queries about these concepts, but not simulate them.
 
 ---
 
-## Level 6 — Filesystem Expectation Layer
+### 2.6 Single-User System Model
 
-* `lainos-ghost-units`
+The system assumes:
 
-Allowed:
+* exactly one user
+* exactly one active session
+* exactly one seat (`seat0`)
 
-* create expected paths (`/run/systemd/*`)
-* satisfy file existence checks
-
-Forbidden:
-
-* storing state
-* reflecting system behavior
-* syncing with service runtime
-* acting as configuration authority
+Multi-user semantics are not modeled.
 
 ---
 
-## Level 7 — Package Integrity Layer
+## 3. Authority Hierarchy
 
-* pacman configuration (NoUpgrade / NoExtract rules)
-* install scripts (`protocol7-core.install`)
-
-Allowed:
-
-* prevent systemd installation
-* protect compatibility shims
-* enforce deterministic system composition
-
-Forbidden:
-
-* modifying runtime behavior
-* influencing service execution
-* injecting dynamic logic into system operation
+| Level | Component                               | Role                        | Forbidden                   |
+| ----- | --------------------------------------- | --------------------------- | --------------------------- |
+| 0     | Kernel                                  | Hardware execution          | —                           |
+| 1     | OpenRC                                  | Service management          | systemd lifecycle logic     |
+| 2     | system services (PipeWire, seatd, etc.) | real system functionality   | systemd assumptions         |
+| 3     | init/session scripts                    | environment setup           | cross-service orchestration |
+| 4     | libsystemd-mock / libdbus-mock          | ABI compatibility layer     | system modeling, scheduling |
+| 5     | dbus-bridge                             | interface translation       | service management logic    |
+| 6     | ghost layers                            | filesystem compatibility    | persistent state storage    |
+| 7     | pacman constraints                      | system integrity protection | runtime behavior changes    |
 
 ---
 
-# 3. Absolute Prohibitions
+## 4. Behavior Model
 
-These are **system-level violations**:
+### 4.1 Compatibility Over Strict Failure
 
-## ❌ No secondary init system
+* Prefer safe no-op success when:
 
-No component may:
+  * operation is informational
+  * no real system effect exists
+  * applications expect success for continuation
 
-* replicate systemd behavior
-* act as PID 1 substitute logic
-* simulate unit graphs
+* Prefer error return when:
 
----
-
-## ❌ No hidden state model
-
-The system must NOT:
-
-* track sessions internally
-* track services internally
-* store lifecycle history
-* infer system state beyond real OS truth
+  * operation requires unsupported system semantics
+  * returning success would imply real functionality exists
 
 ---
 
-## ❌ No policy engine
+### 4.2 No Persistent System Simulation
 
-Forbidden entirely:
+Protocol 7 must not:
 
-* authorization frameworks (polkit-like behavior)
-* rule evaluation systems
-* permission negotiation layers
-
----
-
-## ❌ No multi-user assumptions
-
-Protocol 7 assumes:
-
-* 1 user
-* 1 session
-* 1 seat
-
-Anything else is out of scope.
+* simulate evolving system state
+* track lifecycle transitions over time
+* model service dependency graphs
+* maintain “system truth” beyond static identity
 
 ---
 
-## ❌ No orchestration layer creep
+### 4.3 Deterministic Identity Values
 
-No component may evolve into:
+The system may provide stable values for:
 
-* dependency solver
-* runtime supervisor
-* system event engine
+* machine-id
+* session ID
+* seat name
+* user identity
 
----
+These values:
 
-# 4. Allowed System Reality Model
-
-The only valid runtime model is:
-
-```text
-OpenRC == system truth
-dbus-openrc == communication layer
-applications == consumers
-mock layers == compatibility illusion surface
-```
-
-No other model is permitted.
+* must remain constant across runtime
+* must not encode behavior or relationships
+* must not imply orchestration capability
 
 ---
 
-# 5. Failure Semantics
+### 4.4 Opaque Success Rule
 
-When something breaks:
+A function may return success with a synthetic value if:
 
-* ❌ do NOT adapt system behavior
-* ❌ do NOT emulate missing systemd features
-* ❌ do NOT extend compatibility dynamically
+* the value is non-semantic or informational
+* it does not encode system structure
+* it does not imply lifecycle state
 
-Instead:
+Examples:
 
-* return failure
-* block package operation (if needed)
-* surface ABI mismatch
+* `"active"`, `"running"` (safe labels)
+* `"seat0"`, `"1"` (static identifiers)
 
-> Stability comes from refusal to expand scope.
+Not allowed:
 
----
-
-# 6. Evolution Rule
-
-Protocol 7 may evolve ONLY by:
-
-* adding new **static ABI stubs**
-* extending **translation mappings in dbus-bridge**
-* improving **compatibility return correctness**
-
-It may NOT evolve by:
-
-* increasing system intelligence
-* adding runtime decision-making
-* introducing orchestration logic
+* hierarchical unit trees
+* dependency graphs
+* dynamic service state reasoning
 
 ---
 
-# 7. Final Definition
+### 4.5 Suspend Exception (Preserved)
 
-> Protocol 7 is a **single-user OpenRC Linux system with a strictly bounded compatibility surface that satisfies systemd-dependent software without implementing systemd behavior.**
+`Suspend` and `CanSuspend`:
+
+* return success
+* perform no real suspend action
+
+This exception remains explicitly defined and limited.
 
 ---
 
-# 8. One-Line Enforcement Rule
+## 5. Evolution Rules
 
-> If a component starts making decisions about the system, it is no longer Protocol 7.
+### 5.1 ABI Expansion Allowed
+
+* new systemd symbols may be added
+* implementations must remain minimal and compatibility-focused
 
 ---
 
-If you want, the next useful artifact would be a:
+### 5.2 No Control Logic Growth
 
-* **“drift detection checklist” (to prevent scope creep in code)**
-* or a **formal ABI coverage map (what systemd APIs are safe to ignore vs must stub)**
+Mock layers must not evolve into:
+
+* schedulers
+* service managers
+* policy engines
+* dependency resolvers
+
+They may only:
+
+* return static values
+* return safe no-op results
+* provide minimal contextual responses
+
+---
+
+### 5.3 Compatibility Drift Handling
+
+If upstream software introduces new systemd expectations:
+
+* extend ABI surface minimally
+* avoid introducing systemic logic
+* prefer stubbed compatibility responses
+
+---
+
+## 6. Enforcement Model
+
+### 6.1 Core Rule
+
+> If a component begins *deciding system behavior*, it has exceeded Protocol 7 scope.
+
+---
+
+### 6.2 Review Checklist
+
+Before changes are accepted:
+
+* [ ] Does this introduce lifecycle tracking?
+* [ ] Does this introduce dependency reasoning?
+* [ ] Does this simulate systemd internals?
+* [ ] Does this require persistent state evolution?
+* [ ] Does this replace OpenRC responsibility?
+
+If yes → reject or redesign.
+
+---
+
+## 7. System Guarantee
+
+Protocol 7 guarantees:
+
+* No systemd runtime dependency
+* No systemd service manager replacement
+* Stable single-user system model
+* ABI compatibility for common desktop software
+* Controlled, deterministic behavior surface
+
+---
+
+## 8. Summary
+
+Protocol 7 is:
+
+> A real OpenRC-based system with a minimal, compatibility-first systemd interface layer that avoids reimplementing systemd while satisfying application expectations.
+
+---
+
+If you want next step refinement, the real improvement from here isn’t contract tightening—it’s **mapping each libsystemd-mock function into one of three categories:** (TODO)
+
+* static identity
+* safe no-op success
+* real OS passthrough
+

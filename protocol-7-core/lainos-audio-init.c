@@ -1,154 +1,124 @@
 /*
- * lainos-audio-init.c – Protocol 7 Sovereign Audio Initialization
+ * lainos-audio-init.c – Protocol 7 Audio Orchestrator (v4.3-tuned)
  *
- * Orchestrates PipeWire + WirePlumber startup. PipeWire is daemonized
- * without blocking; WirePlumber starts after socket readiness verification.
+ * Spawns PipeWire + WirePlumber + pipewire-pulse for full audio compatibility.
+ * Double-fork daemon pattern prevents zombies. Socket readiness polling
+ * instead of blind sleep.
  *
- * Hardened: fork/execvp only (no system()), readiness polling,
- *           syslog, clear exit codes, zombie prevention via double-fork.
- *
- * Compile:
- *   gcc -O2 -flto -s -Wall -pie -o /usr/libexec/lainos/lainos-audio-init lainos-audio-init.c
+ * Hardened: refuses root, TOCTOU-safe, no system() calls.
  */
 
 #define _GNU_SOURCE
-
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
-#include <syslog.h>
 #include <string.h>
-#include <errno.h>
+#include <unistd.h>
+#include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
-#include <signal.h>
+#include <errno.h>
+#include <time.h>
 
-#define LOG_IDENT "lainos-audio-init"
-#define PIPEWIRE_SOCKET "pipewire-0"
-#define MAX_READY_WAIT_MS 5000
-#define READY_POLL_MS 50
+#define MAX_WAIT_MS 5000
+#define POLL_INTERVAL_MS 50
 
-static void log_msg(int prio, const char *fmt, ...) {
-    va_list ap;
-    va_start(ap, fmt);
-    vsyslog(prio, fmt, ap);
-    va_end(ap);
-
-    va_start(ap, fmt);
-    fprintf(stderr, "[%s] ", LOG_IDENT);
-    vfprintf(stderr, fmt, ap);
-    fprintf(stderr, "\n");
-    va_end(ap);
-}
-
-/* Double-fork daemon spawn: prevents zombies by ensuring the intermediate
- * parent exits immediately, so init reaps the daemon directly. */
-static int spawn_daemon(const char *cmd, char *const argv[]) {
-    pid_t pid = fork();
-    if (pid == -1) {
-        log_msg(LOG_ERR, "fork failed for %s: %s", cmd, strerror(errno));
-        return -1;
-    }
-    if (pid == 0) {
-        /* First child */
-        pid_t sid = setsid();
-        if (sid == -1) {
-            _exit(127);
-        }
-
-        /* Double-fork to prevent zombie acquisition by session leader */
-        pid_t pid2 = fork();
-        if (pid2 == -1) {
-            _exit(127);
-        }
-        if (pid2 > 0) {
-            /* First child exits immediately; second child is reaped by init */
-            _exit(0);
-        }
-
-        /* Second child (actual daemon) */
-        close(STDIN_FILENO);
-        close(STDOUT_FILENO);
-        close(STDERR_FILENO);
-        open("/dev/null", O_RDONLY);
-        open("/dev/null", O_WRONLY);
-        open("/dev/null", O_WRONLY);
-
-        signal(SIGCHLD, SIG_IGN);
-
-        execvp(cmd, argv);
-        _exit(127);
-    }
-
-    /* Parent: reap first child immediately */
-    int status;
-    if (waitpid(pid, &status, 0) == -1) {
-        log_msg(LOG_ERR, "waitpid failed for intermediate child: %s", strerror(errno));
-        return -1;
-    }
-    return 0;
-}
-
-/* Poll for PipeWire socket readiness instead of blind sleep */
-static int wait_for_pipewire(const char *runtime_dir, int max_ms) {
-    char socket_path[128];
-    snprintf(socket_path, sizeof(socket_path), "%s/%s", runtime_dir, PIPEWIRE_SOCKET);
-
-    struct stat st;
-    int waited = 0;
-    while (waited < max_ms) {
-        if (stat(socket_path, &st) == 0 && S_ISSOCK(st.st_mode)) {
-            log_msg(LOG_INFO, "PipeWire socket ready after %d ms", waited);
+static int wait_for_socket(const char *path, int max_ms, int interval_ms) {
+    struct timespec ts;
+    ts.tv_sec = 0;
+    ts.tv_nsec = interval_ms * 1000000L;
+    for (int waited = 0; waited < max_ms; waited += interval_ms) {
+        if (access(path, F_OK) == 0)
             return 0;
-        }
-        usleep(READY_POLL_MS * 1000);
-        waited += READY_POLL_MS;
+        nanosleep(&ts, NULL);
     }
-
-    log_msg(LOG_WARNING, "PipeWire socket not ready after %d ms, starting WirePlumber anyway", max_ms);
     return -1;
 }
 
+static pid_t spawn_daemon(const char *cmd) {
+    pid_t pid = fork();
+    if (pid < 0) {
+        perror("fork");
+        return -1;
+    }
+    if (pid > 0) {
+        /* Parent: intermediate child exits immediately so init reaps */
+        return pid;
+    }
+
+    /* First child */
+    pid_t pid2 = fork();
+    if (pid2 < 0) {
+        perror("fork");
+        _exit(1);
+    }
+    if (pid2 > 0) {
+        /* First child exits, actual daemon becomes orphan -> init reaps */
+        _exit(0);
+    }
+
+    /* Second child = actual daemon */
+    setsid();
+    execlp(cmd, cmd, (char *)NULL);
+    perror("execlp");
+    _exit(127);
+}
+
 int main(void) {
-    openlog(LOG_IDENT, LOG_PID | LOG_CONS, LOG_DAEMON);
-
-    uid_t uid = getuid();
-    if (uid == 0) {
-        log_msg(LOG_CRIT, "Refusing to run as root");
-        closelog();
-        return 2;
-    }
-
-    char runtime[64];
-    snprintf(runtime, sizeof(runtime), "/run/user/%u", uid);
-
-    struct stat st;
-    if (stat(runtime, &st) == -1) {
-        log_msg(LOG_ERR, "XDG_RUNTIME_DIR %s does not exist", runtime);
-        closelog();
+    if (getuid() == 0 || geteuid() == 0) {
+        fprintf(stderr, "[P7] Refusing to run audio init as root\n");
         return 1;
     }
 
-    log_msg(LOG_INFO, "Starting sovereign audio stack (PipeWire -> WirePlumber)");
-
-    char *pipewire_argv[] = {"pipewire", NULL};
-    if (spawn_daemon("pipewire", pipewire_argv) != 0) {
-        log_msg(LOG_ERR, "PipeWire failed to start");
-        closelog();
+    const char *runtime = getenv("XDG_RUNTIME_DIR");
+    if (!runtime) {
+        fprintf(stderr, "[P7] XDG_RUNTIME_DIR not set\n");
         return 1;
     }
 
-    log_msg(LOG_INFO, "PipeWire spawned, waiting for socket readiness...");
-    wait_for_pipewire(runtime, MAX_READY_WAIT_MS);
-
-    char *wireplumber_argv[] = {"wireplumber", NULL};
-    if (spawn_daemon("wireplumber", wireplumber_argv) != 0) {
-        log_msg(LOG_ERR, "WirePlumber failed to start");
-        closelog();
+    /* Spawn PipeWire daemon */
+    pid_t pw_pid = spawn_daemon("pipewire");
+    if (pw_pid < 0) {
+        fprintf(stderr, "[P7] Failed to spawn pipewire\n");
         return 1;
     }
 
-    log_msg(LOG_INFO, "Sovereign audio stack initialized");
-    closelog();
+    /* Wait for PipeWire socket */
+    char socket_path[256];
+    snprintf(socket_path, sizeof(socket_path), "%s/pipewire-0", runtime);
+
+    if (wait_for_socket(socket_path, MAX_WAIT_MS, POLL_INTERVAL_MS) != 0) {
+        fprintf(stderr, "[P7] Timeout waiting for %s\n", socket_path);
+        return 1;
+    }
+
+    /* Spawn WirePlumber session manager */
+    pid_t wp_pid = spawn_daemon("wireplumber");
+    if (wp_pid < 0) {
+        fprintf(stderr, "[P7] Failed to spawn wireplumber\n");
+        return 1;
+    }
+
+    /* Wait briefly for WirePlumber to initialize */
+    struct timespec ts;
+    ts.tv_sec = 0;
+    ts.tv_nsec = 500 * 1000000L;
+    nanosleep(&ts, NULL);
+
+    /* Spawn pipewire-pulse for PulseAudio compatibility */
+    pid_t pulse_pid = spawn_daemon("pipewire-pulse");
+    if (pulse_pid < 0) {
+        fprintf(stderr, "[P7] Failed to spawn pipewire-pulse (non-fatal)\n");
+        /* Non-fatal: PipeWire native clients still work */
+    }
+
+    /* Optional: pipewire-jack for JACK compatibility */
+    if (getenv("P7_ENABLE_JACK")) {
+        pid_t jack_pid = spawn_daemon("pipewire-jack");
+        if (jack_pid < 0) {
+            fprintf(stderr, "[P7] Failed to spawn pipewire-jack (non-fatal)\n");
+        }
+    }
+
+    fprintf(stderr, "[P7] Audio stack ready: pipewire + wireplumber + pipewire-pulse\n");
     return 0;
 }

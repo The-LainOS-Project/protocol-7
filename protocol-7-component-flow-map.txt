@@ -1,0 +1,453 @@
+================================================================================
+                    PROTOCOL 7 v4.3 — COMPONENT FLOW MAP
+                    dbus-openrc | Single-User | Wayland 
+================================================================================
+
+FILE INVENTORY (protocol-7-core/):
+├── PKGBUILD                          (Build script, v4.3 pkgver)
+├── libsystemd-mock.c                 (~35KB, ABI stub library)
+├── libdbus-mock.c                    (~17KB, D-Bus dlopen stub)
+├── lainos-dbus-bridge.c              (~50KB, login1 D-Bus facade)
+├── lainos-ghost-units.c              (~1.6KB, ghost dir creator)
+├── lainos-init.c                     (~3.8KB, session bootstrap)
+├── lainos-audio-init.c               (~3.4KB, PipeWire orchestrator)
+├── lainos-net-init.c                 (~3.6KB, network hardening)
+├── lainos-notifyd.c                  (~7.2KB, sd_notify sink)
+├── lainos-dbus-bridge.initd          (OpenRC service script)
+├── lainos-notifyd.initd              (OpenRC service script)
+├── cgroup-delegate.initd             (OpenRC service script)
+├── protocol7-core.install            (Pacman install hooks)
+├── shellprocess-final.conf           (Calamares ISO installer)
+└── pacman.conf                       (Hardened pacman rules)
+
+================================================================================
+                              BOOT FLOW
+================================================================================
+
+PHASE 1: OPENRC SYSINIT
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  cgroup-delegate (boot runlevel)                                            │
+│  ├── need: localmount                                                       │
+│  ├── after: root                                                            │
+│  └── Actions:                                                               │
+│      • Mounts cgroup2 at /sys/fs/cgroup                                    │
+│      • Enables controllers: cpu, memory, io, pids                           │
+│      • Creates user.slice                                                   │
+│      • Delegates controllers to user.slice                                  │
+│      • Sets memory.max = "max", memory.swap.max = "max"                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  lainos-ghost-units (sysinit runlevel)                                      │
+│  ├── Must run as root                                                       │
+│  └── Creates ghost directories:                                             │
+│      • /run/systemd/system                                                  │
+│      • /run/systemd/notify                                                  │
+│      • /run/systemd/private                                                 │
+│      • /run/systemd/users                                                   │
+│      • /run/systemd/sessions                                                │
+│      • /run/systemd/machines                                                │
+│      • /run/systemd/shutdown                                                │
+│      • /run/systemd/inhibit                                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  lainos-notifyd (sysinit runlevel)                                          │
+│  ├── need: localmount                                                       │
+│  ├── after: dbus                                                            │
+│  ├── before: seatd                                                          │
+│  ├── start_pre: checkpath /run/systemd                                      │
+│  └── Binary: /usr/libexec/lainos/lainos-notifyd                             │
+│      • Binds DGRAM socket at /run/systemd/notify                            │
+│      • Seccomp-hardened (no exec/fork/clone/ptrace)                         │
+│      • Drops privileges to nobody:notify group                              │
+│      • Rate-limited: 100 msg/sec, burst 10                                  │
+│      • Parses sd_notify states: READY=1, STATUS=, WATCHDOG=1, etc.        │
+│      • Mirrors to syslog                                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+PHASE 2: OPENRC DEFAULT
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  dbus (default runlevel) — dbus-openrc                                      │
+│  └── Provides: system + session D-Bus buses                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  seatd (default runlevel)                                                   │
+│  └── Provides: seat0, session management for unprivileged Wayland           │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  lainos-dbus-bridge (default runlevel)                                      │
+│  ├── need: dbus                                                             │
+│  ├── after: seatd                                                           │
+│  ├── before: display-manager                                                │
+│  ├── start_pre: checkpath /run/systemd, /run/user                         │
+│  └── Binary: /usr/lib/lainos/lainos-dbus-bridge                            │
+│      • Claims org.freedesktop.login1 on system bus                          │
+│      • Implements full login1 Manager/Session/Seat/User interfaces          │
+│      • Runtime UID detection from /etc/passwd (first non-root/nobody)     │
+│      • Seccomp: 40+ allowed syscalls                                       │
+│      • Drops privileges to nobody                                           │
+│      • Power actions: Reboot/PowerOff → openrc-shutdown                    │
+│      • Suspend: no-op success                                               │
+│      • Hibernate/HybridSleep: returns NotSupported                          │
+│      • Static identity: 1 session, seat0, 1 user                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  greetd (default runlevel) — display manager                                │
+│  └── Launches: tuigreet --cmd /usr/libexec/lainos/lainos-init             │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+PHASE 3: USER SESSION
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  lainos-init (executed by greetd/tuigreet)                                  │
+│  ├── Refuses root execution                                                 │
+│  ├── TOCTOU-safe: openat + mkdirat + fchown for /run/user/$UID            │
+│  ├── Compositor fallback: sway → dwl → river                                │
+│  ├── Environment setup:                                                     │
+│  │   • PATH=/usr/local/bin:/usr/bin:/bin                                    │
+│  │   • XDG_RUNTIME_DIR=/run/user/$UID                                      │
+│  │   • XDG_SESSION_TYPE=wayland                                             │
+│  │   • XDG_CURRENT_DESKTOP=<compositor>                                     │
+│  │   • WAYLAND_DISPLAY=wayland-1                                            │
+│  │   • DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$UID/bus               │
+│  │   • NOTIFY_SOCKET=/run/systemd/notify                                   │
+│  │   • MOZ_ENABLE_WAYLAND=1                                                 │
+│  │   • LIBSEAT_BACKEND=builtin                                              │
+│  └── Execs compositor directly (no fork)                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  lainos-audio-init (user session, spawned by compositor or user)            │
+│  ├── Refuses root execution                                                 │
+│  ├── Requires: XDG_RUNTIME_DIR                                              │
+│  ├── Double-fork daemon pattern for each component                          │
+│  ├── Spawns in order:                                                       │
+│  │   1. pipewire → waits for $XDG_RUNTIME_DIR/pipewire-0 socket            │
+│  │   2. wireplumber → 500ms settle                                          │
+│  │   3. pipewire-pulse (non-fatal if fails)                                │
+│  │   4. pipewire-jack (optional, P7_ENABLE_JACK env)                        │
+│  └── Socket readiness polling (50ms intervals, 5s max)                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  lainos-net-init (run as root, typically via doas/rc-service)               │
+│  ├── Requires root                                                          │
+│  ├── IPv4 hardening (sysctl):                                               │
+│  │   • rp_filter=1 (all + default)                                          │
+│  │   • accept_redirects=0 (all + default)                                     │
+│  │   • secure_redirects=0, send_redirects=0                                  │
+│  │   • accept_source_route=0                                                │
+│  │   • tcp_syncookies=1                                                     │
+│  │   • icmp_echo_ignore_broadcasts=1                                        │
+│  │   • log_martians=1, icmp_ignore_bogus_error_responses=1                   │
+│  │   • tcp_timestamps=0 (non-fatal)                                         │
+│  ├── IPv6 hardening:                                                        │
+│  │   • accept_redirects=0 (all + default)                                     │
+│  │   • accept_source_route=0                                                │
+│  ├── Wireless: iwctl station wlan0 scan (if wlan0 exists)                   │
+│  └── DNS: resolvconf -u                                                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+                        APPLICATION RUNTIME FLOW
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  APPLICATION (e.g., Electron, Chromium, Firefox, Flatpak)                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+        │
+        ├──► Dynamic linker resolves libsystemd.so.0 → libsystemd-mock.c
+        │    • 35KB mock, ~100+ stub functions
+        │    • Fake pointers: 0x0000dead0000000X (non-canonical, #GP on deref)
+        │    • Constructor: RNG seed + version guard (blocks systemd 256+)
+        │    • ELF note: "P7-ABI-2026.05|v4.3|..."
+        │    • Key stubs:
+        │      - sd_booted() → returns 1
+        │      - sd_notify() → logs to syslog, returns 1
+        │      - sd_session_get_*() → "wayland", "sway", "seat0", "active"
+        │      - sd_pid_get_cgroup() → "/user.slice/user-1000.slice/session-1.scope"
+        │      - sd_bus_call() → smart dispatch, returns 0 (success)
+        │      - sd_bus_process/sd_bus_wait → no-op loops
+        │      - sd_is_socket_*() → REAL fstat/getsockopt checks
+        │
+        ├──► Dynamic linker resolves libdbus-1.so.3 → libdbus-mock.c
+        │    • 17KB stub for dlopen() consumers
+        │    • Fake pointers: 0x0000cafe0000000X
+        │    • All connection/message/iter operations are no-ops
+        │    • dbus_bus_request_name → PRIMARY_OWNER
+        │    • Returns plausible defaults for all getters
+        │
+        ├──► D-Bus call to org.freedesktop.login1
+        │    ├──► dbus-openrc (real system bus)
+        │    │         │
+        │    │         ▼
+        │    │    lainos-dbus-bridge
+        │    │    • Claims org.freedesktop.login1
+        │    │    • Handles: GetSession, GetSeat, GetUser
+        │    │    • Handles: ListSessions, ListSeats, ListUsers, ListInhibitors
+        │    │    • Handles: Inhibit (returns pipe fd)
+        │    │    • Handles: Reboot, PowerOff, Suspend, Hibernate, HybridSleep
+        │    │    • Handles: CanReboot, CanPowerOff, CanSuspend, CanHibernate
+        │    │    • Properties: full Manager/Session/Seat/User property sets
+        │    │    • Signals: SessionNew/Removed, SeatNew/Removed, etc.
+        │    │
+        │    └──► dbus-openrc (real session bus, if applicable)
+        │
+        ├──► sd_notify() call
+        │    ├──► libsystemd-mock intercepts
+        │    │         │
+        │    │         ▼
+        │    │    /run/systemd/notify (DGRAM socket)
+        │    │         │
+        │    │         ▼
+        │    │    lainos-notifyd absorbs message
+        │    │    • Categorizes: READY=1, STATUS=, WATCHDOG=1, etc.
+        │    │    • Logs to syslog
+        │    │    • Rate-limited: 100 msg/sec
+        │    │
+        │    └──► NOTIFY_SOCKET env var (set by lainos-init)
+        │
+        └──► File existence checks
+             ├──► /run/systemd/* → Created by lainos-ghost-units
+             ├──► /run/user/$UID → Created by lainos-init
+             └──► /run/systemd/notify → Created by lainos-notifyd
+
+================================================================================
+                         LIBRARY MOCK DETAIL
+================================================================================
+
+libsystemd-mock.c (compiled as libsystemd.so.0):
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ CATEGORY              FUNCTIONS                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Core                  sd_booted, sd_notify, sd_notifyf, sd_listen_fds       │
+│                       sd_listen_fds_with_names                              │
+│ ID128                 sd_id128_get_machine, sd_id128_get_boot              │
+│                       sd_id128_get_invocation, sd_id128_randomize           │
+│                       sd_id128_from_string, sd_id128_to_string             │
+│                       sd_id128_string_equal                                 │
+│ Machine State         sd_machine_get_state                                  │
+│ PID Family            sd_pid_get_owner_uid, sd_pid_get_session              │
+│                       sd_pid_get_cgroup, sd_pid_get_machine_name            │
+│                       sd_pid_get_slice, sd_pid_get_unit                   │
+│                       sd_pid_get_user_slice, sd_pid_get_user_unit           │
+│ Peer                  sd_peer_get_* (all 8 functions)                       │
+│ PIDFD                 sd_pidfd_get_* (all 9 functions)                      │
+│ Session               sd_session_get_class, sd_session_get_desktop           │
+│                       sd_session_get_display, sd_session_get_leader       │
+│                       sd_session_get_seat, sd_session_get_service          │
+│                       sd_session_get_state, sd_session_get_tty             │
+│                       sd_session_get_type, sd_session_get_uid              │
+│                       sd_session_get_username, sd_session_get_vt           │
+│                       sd_session_is_active, sd_session_is_remote            │
+│                       sd_session_get_remote_host, sd_session_get_remote_user│
+│                       sd_session_get_start_time, sd_session_get_extra_device │
+│ Seat                  sd_seat_can_graphical, sd_seat_can_multi_session     │
+│                       sd_seat_can_tty, sd_seat_get_active                  │
+│                       sd_seat_get_sessions                                  │
+│ UID                   sd_uid_get_display, sd_uid_get_login_time            │
+│                       sd_uid_get_seats, sd_uid_get_sessions                │
+│                       sd_uid_get_state, sd_uid_is_on_seat                   │
+│ Getters               sd_get_seats, sd_get_sessions, sd_get_uids            │
+│                       sd_get_machine_names                                  │
+│ Path                  sd_path_lookup, sd_path_lookup_strv                   │
+│ Watchdog              sd_watchdog_enabled                                   │
+│ Is (real checks)      sd_is_fifo, sd_is_special, sd_is_socket               │
+│                       sd_is_socket_inet, sd_is_socket_unix                  │
+│                       sd_is_mq, sd_is_socket_sockaddr                       │
+│ Bus Error             sd_bus_error_free, sd_bus_error_copy                    │
+│                       sd_bus_error_set, sd_bus_error_set_const             │
+│                       sd_bus_error_setf, sd_bus_error_is_set                  │
+│ Message Type          sd_bus_message_get_type, sd_bus_message_is_method_call│
+│                       sd_bus_message_is_method_error, sd_bus_message_is_signal│
+│ Message Accessors     sd_bus_message_get_sender, sd_bus_message_get_destination│
+│                       sd_bus_message_get_path, sd_bus_message_get_interface │
+│                       sd_bus_message_get_member, sd_bus_message_get_creds   │
+│                       sd_bus_message_get_errno                              │
+│ Bus Accessors         sd_bus_get_unique_name, sd_bus_get_owner_creds        │
+│                       sd_bus_get_fd                                         │
+│ Process/Wait          sd_bus_process, sd_bus_wait                          │
+│ Match Rules           sd_bus_add_match, sd_bus_slot_unref                   │
+│ Creds                 sd_bus_creds_get_uid, sd_bus_creds_get_euid           │
+│                       sd_bus_creds_get_gid, sd_bus_creds_get_pid           │
+│                       sd_bus_creds_get_comm, sd_bus_creds_get_exe           │
+│                       sd_bus_creds_get_session, sd_bus_creds_get_unit        │
+│                       sd_bus_creds_get_owner_uid, sd_bus_creds_new_from_pid │
+│                       sd_bus_creds_ref, sd_bus_creds_unref                  │
+│ Event                 sd_event_default, sd_event_new, sd_event_unref        │
+│                       sd_event_add_io, sd_event_add_time                   │
+│                       sd_event_add_child_time, sd_event_source_set_enabled   │
+│                       sd_event_source_set_priority, sd_event_run            │
+│                       sd_event_exit, sd_event_get_fd                        │
+│                       sd_event_source_get_fd                                │
+│ Message Core          sd_bus_message_new_method_call, sd_bus_message_new_method_return│
+│                       sd_bus_message_new_signal, sd_bus_message_append_basic│
+│                       sd_bus_message_appendv, sd_bus_message_append_array   │
+│                       sd_bus_message_read_basic, sd_bus_message_read_array   │
+│                       sd_bus_message_enter_container, sd_bus_message_exit_container│
+│ Smart Call            sd_bus_call (detects member, logs, returns success)    │
+│                       sd_bus_call_method                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+libdbus-mock.c (compiled as libdbus-1.so.3):
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ CATEGORY              FUNCTIONS                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Error                 dbus_error_init, dbus_error_free, dbus_set_error      │
+│                       dbus_set_error_const, dbus_error_is_set               │
+│                       dbus_error_name, dbus_error_message                   │
+│ Connection            dbus_bus_get, dbus_bus_get_private                      │
+│                       dbus_connection_open, dbus_connection_open_private    │
+│                       dbus_connection_ref, dbus_connection_unref              │
+│                       dbus_connection_close, dbus_connection_get_is_connected │
+│                       dbus_connection_get_is_authenticated                    │
+│                       dbus_connection_get_is_anonymous                        │
+│                       dbus_connection_get_server_id                         │
+│                       dbus_connection_can_send_type                         │
+│ Message               dbus_message_new, dbus_message_new_method_call        │
+│                       dbus_message_new_method_return, dbus_message_new_signal│
+│                       dbus_message_new_error, dbus_message_ref              │
+│                       dbus_message_unref, dbus_message_get_type             │
+│                       dbus_message_is_method_call, dbus_message_is_signal   │
+│                       dbus_message_is_error, dbus_message_get_destination     │
+│                       dbus_message_get_path, dbus_message_get_interface     │
+│                       dbus_message_get_member, dbus_message_get_sender        │
+│                       dbus_message_get_error_name, dbus_message_get_reply_serial│
+│                       dbus_message_get_serial                               │
+│ Iterator              dbus_message_iter_init_append, dbus_message_iter_init  │
+│                       dbus_message_iter_has_next, dbus_message_iter_next     │
+│                       dbus_message_iter_get_arg_type, dbus_message_iter_get_element_type│
+│                       dbus_message_iter_recurse, dbus_message_iter_get_basic│
+│                       dbus_message_iter_get_fixed_array, dbus_message_iter_append_basic│
+│                       dbus_message_iter_open_container                      │
+│                       dbus_message_iter_close_container                     │
+│                       dbus_message_iter_append_fixed_array                  │
+│ Args                  dbus_message_get_args, dbus_message_get_args_valist   │
+│                       dbus_message_append_args, dbus_message_append_args_valist│
+│ Setters               dbus_message_set_destination, dbus_message_set_path   │
+│                       dbus_message_set_interface, dbus_message_set_member   │
+│ Send                  dbus_connection_send, dbus_connection_send_with_reply_and_block│
+│                       dbus_connection_send_with_reply                       │
+│ Pending               dbus_pending_call_ref, dbus_pending_call_unref        │
+│                       dbus_pending_call_set_notify, dbus_pending_call_get_completed│
+│                       dbus_pending_call_steal_reply, dbus_pending_call_block│
+│ Bus Name              dbus_bus_request_name, dbus_bus_release_name          │
+│ Match                 dbus_bus_add_match, dbus_bus_remove_match             │
+│ Filters               dbus_connection_add_filter, dbus_connection_remove_filter│
+│ Watch/Timeout         dbus_connection_set_watch_functions                   │
+│                       dbus_connection_set_timeout_functions                 │
+│ Misc                  dbus_shutdown, dbus_get_local_machine_id              │
+│ Validation            dbus_validate_path, dbus_validate_interface           │
+│                       dbus_validate_member, dbus_validate_error_name        │
+│                       dbus_validate_bus_name                                │
+│ Memory                dbus_malloc, dbus_malloc0, dbus_realloc, dbus_free    │
+│ Threads               dbus_threads_init_default                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+                         SECURITY & HARDENING
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ COMPONENT          HARDENING MEASURES                                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ libsystemd-mock  • Fake pointers in non-canonical x86_64 hole (segfault     │
+│                    on dereference)                                          │
+│                  • Constructor blocks systemd 256+ binaries                 │
+│                  • ELF note for identification                              │
+│                  • P7_MOCK_VERBOSE env for debug logging                    │
+│                  • P7_MOCK_FAIL env for random failure injection            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ libdbus-mock     • Fake pointers in non-canonical hole                      │
+│                  • Minimal surface, no-op heavy                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ lainos-dbus-bridge • Seccomp whitelist: 40+ syscalls only                   │
+│                    • Privilege drop to nobody                               │
+│                    • No dynamic allocation in signal handler                │
+│                    • SIGINT/SIGTERM graceful shutdown                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ lainos-notifyd     • Seccomp whitelist: no exec/fork/clone/ptrace           │
+│                    • Privilege drop to nobody:notify                        │
+│                    • Rate limiting: 100 msg/sec, burst 10                   │
+│                    • DGRAM socket (no connection state)                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ lainos-init        • Refuses root execution                                   │
+│                    • TOCTOU-safe directory creation (openat/mkdirat)      │
+│                    • clearenv() + minimal environment                       │
+│                    • Direct exec (no shell, no fork)                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ lainos-audio-init  • Refuses root execution                                   │
+│                    • Double-fork daemon pattern (no zombies)                │
+│                    • Socket readiness polling (no blind sleep)                │
+│                    • No system() calls                                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ lainos-net-init    • Requires root (network hardening)                      │
+│                    • All sysctl writes checked for failure                  │
+│                    • Non-fatal failures logged but don't abort                │
+│                    • Return codes: 0=success, 1=partial, 2=fatal            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ pacman.conf        • IgnorePkg: systemd, systemd-libs                      │
+│                    • NoExtract: /usr/lib/systemd/*                           │
+│                    • Prevents systemd package contamination                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+                         DATA FLOW SUMMARY
+================================================================================
+
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│   AUR Package   │────►│  libsystemd-    │────►│  dbus-openrc    │
+│   (Electron,    │     │  mock.so.0      │     │  (system bus)   │
+│   Chromium,     │     │  (ABI stub)     │     │                 │
+│   Firefox, etc) │     │                 │     │                 │
+└─────────────────┘     └─────────────────┘     └────────┬────────┘
+        │                      │                       │
+        │                      │                       ▼
+        │                      │              ┌─────────────────┐
+        │                      │              │ lainos-dbus-    │
+        │                      │              │ bridge          │
+        │                      │              │ (login1 facade) │
+        │                      │              └─────────────────┘
+        │                      │                       │
+        │                      ▼                       ▼
+        │              ┌─────────────────┐     ┌─────────────────┐
+        │              │  libdbus-       │     │  openrc-        │
+        │              │  mock.so.3      │     │  shutdown       │
+        │              │  (dlopen stub)  │     │  (reboot/power) │
+        │              └─────────────────┘     └─────────────────┘
+        │                      │
+        ▼                      ▼
+┌─────────────────┐     ┌─────────────────┐
+│  /run/systemd/* │     │  /run/systemd/  │
+│  (ghost dirs)   │     │  notify         │
+│                 │     │  (DGRAM socket) │
+└─────────────────┘     └────────┬────────┘
+                                 │
+                                 ▼
+                        ┌─────────────────┐
+                        │  lainos-        │
+                        │  notifyd        │
+                        │  (absorber)     │
+                        └─────────────────┘
+                                 │
+                                 ▼
+                        ┌─────────────────┐
+                        │    syslog-ng    │
+                        │    (logging)    │
+                        └─────────────────┘
+
+================================================================================
+                              END OF MAP
+================================================================================
