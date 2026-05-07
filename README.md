@@ -417,7 +417,7 @@ The complete component map is documented in the repository. Core components incl
 
 
 
-Protocol 7: ≈ 2,935 LOC
+Protocol 7: ≈ 10,000 LOC
 
 OpenRC: ≈ 14,000 LOC
 
