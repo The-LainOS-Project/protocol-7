@@ -1,0 +1,101 @@
+**Here is a complete categorized mapping of all `sd_*` symbols from your `nm` output** into the three recommended categories for a high-quality `libsystemd-mock`:
+
+### 1. Static Identity (return fixed/constant values, no side effects)
+These are pure queries or deterministic transformations. Mock with constants or simple logic.
+
+- `sd_booted`
+- `sd_bus_creds_get_*` (all of them: audit, cgroup, comm, exe, pid, uid, gid, etc.)
+- `sd_bus_creds_has_*_cap` (bounding, effective, etc.)
+- `sd_bus_creds_new_from_pid` / `sd_bus_creds_new_from_pidfd`
+- `sd_bus_creds_ref` / `sd_bus_creds_unref`
+- `sd_bus_get_bus_id`
+- `sd_bus_get_creds_mask`
+- `sd_bus_get_owner_creds`
+- `sd_bus_get_scope`
+- `sd_bus_get_tid`
+- `sd_bus_get_unique_name`
+- `sd_bus_interface_name_is_valid`
+- `sd_bus_is_anonymous` / `sd_bus_is_bus_client` / `sd_bus_is_monitor` / `sd_bus_is_server` / `sd_bus_is_trusted`
+- `sd_bus_member_name_is_valid`
+- `sd_bus_message_get_*` (most getters: cookie, creds, destination, interface, member, path, sender, seqnum, signature, type, etc.)
+- `sd_bus_message_has_signature`
+- `sd_bus_message_is_empty` / `sd_bus_message_is_method_call` / `sd_bus_message_is_method_error` / `sd_bus_message_is_signal`
+- `sd_bus_object_path_is_valid`
+- `sd_bus_path_decode*` / `sd_bus_path_encode*`
+- `sd_bus_service_name_is_valid`
+- `sd_bus_slot_get_*` (most getters)
+- `sd_bus_track_*` (contains, count, first, next, etc. — if no real tracking needed)
+- `sd_device_get_*` (most getters: action, devname, devnum, devpath, ifindex, subsystem, sysname, syspath, etc.)
+- `sd_device_has_*`
+- `sd_event_source_get_*` (most getters)
+- `sd_get_machine_names` / `sd_get_seats` / `sd_get_sessions` / `sd_get_uids`
+- `sd_id128_from_string` / `sd_id128_to_string` / `sd_id128_to_uuid_string` / `sd_id128_string_equal`
+- `sd_id128_get_boot` / `sd_id128_get_machine` (can be static)
+- `sd_id128_randomize` (can be static fake)
+- `sd_is_fifo` / `sd_is_mq` / `sd_is_socket*` / `sd_is_special`
+- `sd_json_variant_*` **(most type checks, getters, is_*, type_*)**
+- `sd_listen_fds` / `sd_listen_fds_with_names` (often 0 in mock)
+- `sd_login_monitor_*` (lightweight)
+- `sd_machine_get_class`
+- `sd_peer_get_*` / `sd_pidfd_get_*` / `sd_pid_get_*` (all login/session/unit queries)
+- `sd_seat_can_*` / `sd_seat_get_*`
+- `sd_session_get_*` / `sd_session_is_*`
+- `sd_uid_get_*` / `sd_uid_is_on_seat`
+- `sd_varlink_get_*` (most getters)
+- `sd_watchdog_enabled`
+
+**Strategy**: Return pre-defined values, fake IDs, empty strings, 0, or `true`/`false` as appropriate. Very safe.
+
+### 2. Safe No-Op Success (always succeed, do nothing or minimal work)
+These can return success (0) with harmless stubs. Core of a good mock.
+
+- All `sd_bus_error_*` (set, free, is_set, get_errno, etc.) → return 0 or clear error
+- `sd_bus_message_new*` (most constructors) → return fake message
+- `sd_bus_message_append*` / `sd_bus_message_read*` / `sd_bus_message_enter/exit_container` → no-op or fake data
+- `sd_bus_message_ref` / `sd_bus_message_unref`
+- `sd_bus_message_seal`
+- `sd_bus_message_set_*` (flags, etc.)
+- `sd_bus_reply_method_*` → return 0
+- `sd_bus_slot_ref` / `sd_bus_slot_unref`
+- `sd_bus_track_add*` / `sd_bus_track_remove*` / `sd_bus_track_ref` / `sd_bus_track_unref`
+- `sd_device_enumerator_*` (most) → return empty enumerator
+- `sd_device_monitor_*` → no-op start/stop
+- `sd_device_new_*` → return fake device
+- `sd_device_ref` / `sd_device_unref`
+- `sd_event_*` (new, default, ref, unref, add_*, source_*, etc.) → fake event loop that "runs" but does nothing
+- `sd_event_source_ref` / `sd_event_source_unref`
+- `sd_hwdb_*` → fake/empty database
+- `sd_id128_get_*_app_specific` (can be deterministic)
+- `sd_journal_*` **(most)** → no-op or empty journal (very common in mocks)
+- `sd_json_build*` / `sd_json_dispatch*` / `sd_json_parse*` / `sd_json_variant_new*` / `sd_json_variant_unref*` (many can be minimal)
+- `sd_notify*` / `sd_pid_notify*` → always succeed (common pattern)
+- `sd_path_lookup*`
+- `sd_varlink_*` (many: new, ref, unref, error, reply, notify, etc.) → fake successful varlink
+- `sd_varlink_server_*` (most) → lightweight fake server
+
+**Strategy**: Return `0` (success), allocate tiny dummy objects if needed, ignore operations. This covers the vast majority of "works in a container" use cases.
+
+### 3. Real OS Passthrough (call through to real libsystemd or libc where it matters)
+These need real behavior for correctness or because they touch the actual OS.
+
+- `sd_bus_default*` / `sd_bus_open*` / `sd_bus_new` / `sd_bus_start` / `sd_bus_close*`
+- `sd_bus_call*` / `sd_bus_call_method*` / `sd_bus_send*` / `sd_bus_emit*`
+- `sd_bus_process*` / `sd_bus_wait*` / `sd_bus_flush*`
+- `sd_bus_set_*` (address, fd, exec, etc.) that affect connection
+- `sd_bus_request_name` / `sd_bus_release_name`
+- `sd_bus_add_match*` / `sd_bus_add_object*` / `sd_bus_add_filter*`
+- `sd_device_trigger*`
+- `sd_device_set_sysattr_value*`
+- `sd_event_loop*` / `sd_event_run*` / `sd_event_dispatch*` / `sd_event_wait*`
+- `sd_journal_open*` / `sd_journal_send*` / `sd_journal_print*` (if you want real logging)
+- `sd_varlink_connect*` / `sd_varlink_call*` / `sd_varlink_server_listen*` (real IPC)
+- Heavy device enumeration / monitor that apps actually rely on (`sd_device_enumerator_get_device*`, `sd_device_monitor_receive`, etc.)
+- `sd_event_add_io` / `sd_event_add_time` / `sd_event_add_signal` (if real event loop is desired)
+
+**Strategy**: `dlsym(RTLD_NEXT, "sd_...")` and call the real function. This is the "passthrough" part.
+
+### Recommended Implementation Approach
+
+1. **Static Identity** → compile-time tables or simple switch/return.
+2. **Safe No-Op Success** → default stub that returns 0 + optional fake object.
+3. **Real Passthrough** → maintain a small list of functions that do `real_sd_xxx = dlsym(...); return real_sd_xxx(...);`
